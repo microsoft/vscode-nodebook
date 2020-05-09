@@ -6,13 +6,14 @@
 import * as vscode from 'vscode';
 
 import { ProjectContainer } from './project';
-import { NodebookProvider } from './nodebookProvider';
+import { NodebookContentProvider } from './nodebookProvider';
 
 export function activate(context: vscode.ExtensionContext) {
 
 	const projectContainer = new ProjectContainer();
 
-	context.subscriptions.push(vscode.notebook.registerNotebookProvider('nodebook', new NodebookProvider(projectContainer)));
+	context.subscriptions.push(vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer)));
+
 	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('node', {
 		provideDebugConfigurations(folder: vscode.WorkspaceFolder) {
 			return [

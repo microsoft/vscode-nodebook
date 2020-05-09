@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { Project, ProjectContainer } from './project';
+import { NotebookDocumentEditEvent } from 'vscode';
 
 interface RawNotebookCell {
 	language: string;
@@ -13,19 +14,44 @@ interface RawNotebookCell {
 	editable?: boolean;
 }
 
-export class NodebookProvider implements vscode.NotebookProvider {
+export class NodebookContentProvider implements vscode.NotebookContentProvider {
 
-	constructor(
-		readonly container: ProjectContainer
-	) { }
+	private _localDisposables: vscode.Disposable[];
+	private readonly container: ProjectContainer
 
-	async resolveNotebook(editor: vscode.NotebookEditor): Promise<void> {
+	constructor(container: ProjectContainer) {
+		this.container = container;
+		this._localDisposables = [];
 
-		editor.document.languages = ['javascript'];
+		this._localDisposables.push(vscode.notebook.onDidOpenNotebookDocument(document => {
+
+			if (this.container.lookupProject(document.uri, false)) {
+				return;
+			}
+
+			// (1) register a new project for this notebook
+			// todo@API add new cells
+
+			const project = new Project();
+			this.container.register(
+				document.uri,
+				project,
+				uri => document.cells.some(cell => cell.uri.toString() === uri.toString()),
+			);
+		}));
+
+		this._localDisposables.push(vscode.notebook.onDidCloseNotebookDocument(() => {
+			// todo unregister
+		}));
+	}
+
+	onDidChangeNotebook: vscode.Event<NotebookDocumentEditEvent> = new vscode.EventEmitter<NotebookDocumentEditEvent>().event;
+
+	async openNotebook(uri: vscode.Uri): Promise<vscode.NotebookData> {
 
 		let contents = '';
 		try {
-			contents = Buffer.from(await vscode.workspace.fs.readFile(editor.document.uri)).toString('utf8');
+			contents = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
 		} catch {
 		}
 
@@ -35,25 +61,20 @@ export class NodebookProvider implements vscode.NotebookProvider {
 		} catch {
 			raw = [];
 		}
-		await editor.edit(editBuilder => {
-			for (let item of raw) {
-				editBuilder.insert(
-					0,
-					item.value,
-					item.language,
-					item.kind,
-					[],
-					{ editable: item.editable ?? true, runnable: true }
-				);
-			}
-		});
 
-		const project = new Project(editor.document);
-		this.container.register(
-			editor.document.uri,
-			project,
-			(uri: vscode.Uri) => editor.document.cells.some(cell => cell.uri.toString() === uri.toString())
-		);
+		const notebookData: vscode.NotebookData = {
+			languages: ['javascript'],
+			metadata: { cellRunnable: true },
+			cells: raw.map(item => ({
+				source: item.value,
+				language: item.language,
+				cellKind: item.kind,
+				outputs: [],
+				metadata: { editable: item.editable ?? true, runnable: true }
+			}))
+		};
+
+		return notebookData;
 	}
 
 	async executeCell(document: vscode.NotebookDocument, cell: vscode.NotebookCell | undefined, token: vscode.CancellationToken): Promise<void> {
@@ -87,7 +108,21 @@ export class NodebookProvider implements vscode.NotebookProvider {
 		}];
 	}
 
-	async save(document: vscode.NotebookDocument): Promise<boolean> {
+	public saveNotebook(document: vscode.NotebookDocument, _cancellation: vscode.CancellationToken): Promise<void> {
+		return this._save(document, document.uri);
+	}
+
+	public saveNotebookAs(targetResource: vscode.Uri, document: vscode.NotebookDocument, _cancellation: vscode.CancellationToken): Promise<void> {
+		return this._save(document, targetResource);
+	}
+
+	public dispose() {
+		this._localDisposables.forEach(d => d.dispose());
+	}
+
+	// ---- private ----
+
+	private async _save(document: vscode.NotebookDocument, targetResource: vscode.Uri): Promise<void> {
 		let contents: RawNotebookCell[] = [];
 		for (let cell of document.cells) {
 			contents.push({
@@ -97,7 +132,6 @@ export class NodebookProvider implements vscode.NotebookProvider {
 				editable: cell.metadata.editable
 			});
 		}
-		await vscode.workspace.fs.writeFile(document.uri, Buffer.from(JSON.stringify(contents)));
-		return true;
+		await vscode.workspace.fs.writeFile(targetResource, Buffer.from(JSON.stringify(contents)));
 	}
 }
