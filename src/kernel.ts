@@ -15,7 +15,7 @@ const PREVIEW_JS_DEBUG = false;
 
 interface NodeCellInfo {
 	uri: vscode.Uri;
-	ref: number;
+	ref: number | undefined;
 	name: string;
 	path: string;
 	fileName: string;
@@ -143,33 +143,114 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 	createDebugAdapterTracker(session: vscode.DebugSession) : vscode.ProviderResult<vscode.DebugAdapterTracker> {
 
 		return <vscode.DebugAdapterTracker> {
-			// 'sourceHook' is not yet official API
-			sourceHook: (s: any) => {
-				if (typeof s.path === 'string') {
+			onWillReceiveMessage: (m: DebugProtocol.ProtocolMessage) => {
+				// VS Code -> DA
+				visitSources(m, s => {
+					if (typeof s.path === 'string') {
 						// TODO: map something to Engine
 						if (s.path.indexOf('vscode-notebook:') === 0) {
-						const uri = vscode.Uri.parse(s.path);
-						const info = this.getInfo(uri);
-						if (info) {
-							s.path = info.path;
-							s.sourceRef = info.ref;
-						}
-					} else {
-						// check for all nodebook cell related sources (DA -> VS Code)
-						// TODO: map something back to Engine
-						if (s.path.indexOf('nodebook_cell_') >= 0) {
-							// this can only happen if we have created a dummy file for a cell previously, so we have a uri->file mapping (that lacks the source reference)
-							let info = this.map.get(s.path);
+							const uri = vscode.Uri.parse(s.path);
+							const info = this.getInfo(uri);
 							if (info) {
-								info.ref = s.sourceReference;
-								s.name = info.name;
-								s.path = info.uri.toString();
-								s.sourceReference = 0;
+								s.path = info.path;
+								s.sourceReference = info.ref;
 							}
 						}
 					}
-				}
+				});
+			},
+			onDidSendMessage: (m: DebugProtocol.ProtocolMessage) => {
+				// DA -> VS Code
+				visitSources(m, s => {
+					// check for all nodebook cell related sources (DA -> VS Code)
+					// TODO: map something back to Engine
+					if (s.path && s.path.indexOf('nodebook_cell_') >= 0) {
+						// this can only happen if we have created a dummy file for a cell previously, so we have a uri->file mapping (that lacks the source reference)
+						let info = this.map.get(s.path);
+						if (info) {
+							info.ref = s.sourceReference;
+							s.name = info.name;
+							s.path = info.uri.toString();
+							s.sourceReference = 0;
+						}
+					}
+				});
 			}
 		}
+	}
+}
+
+// this vistor could be moved into the DAP npm module (it must be kept in sync with the spec)
+function visitSources(msg: DebugProtocol.ProtocolMessage, sourceHook: (source: DebugProtocol.Source) => void): void {
+
+	const hook = (source: DebugProtocol.Source | undefined) => {
+		if (source) {
+			sourceHook(source);
+		}
+	};
+
+	switch (msg.type) {
+		case 'event':
+			const event = <DebugProtocol.Event>msg;
+			switch (event.event) {
+				case 'output':
+					hook((<DebugProtocol.OutputEvent>event).body.source);
+					break;
+				case 'loadedSource':
+					hook((<DebugProtocol.LoadedSourceEvent>event).body.source);
+					break;
+				case 'breakpoint':
+					hook((<DebugProtocol.BreakpointEvent>event).body.breakpoint.source);
+					break;
+				default:
+					break;
+			}
+			break;
+		case 'request':
+			const request = <DebugProtocol.Request>msg;
+			switch (request.command) {
+				case 'setBreakpoints':
+					hook((<DebugProtocol.SetBreakpointsArguments>request.arguments).source);
+					break;
+				case 'breakpointLocations':
+					hook((<DebugProtocol.BreakpointLocationsArguments>request.arguments).source);
+					break;
+				case 'source':
+					hook((<DebugProtocol.SourceArguments>request.arguments).source);
+					break;
+				case 'gotoTargets':
+					hook((<DebugProtocol.GotoTargetsArguments>request.arguments).source);
+					break;
+				case 'launchVSCode':
+					//request.arguments.args.forEach(arg => fixSourcePath(arg));
+					break;
+				default:
+					break;
+			}
+			break;
+		case 'response':
+			const response = <DebugProtocol.Response>msg;
+			if (response.success && response.body) {
+				switch (response.command) {
+					case 'stackTrace':
+						(<DebugProtocol.StackTraceResponse>response).body.stackFrames.forEach(frame => hook(frame.source));
+						break;
+					case 'loadedSources':
+						(<DebugProtocol.LoadedSourcesResponse>response).body.sources.forEach(source => hook(source));
+						break;
+					case 'scopes':
+						(<DebugProtocol.ScopesResponse>response).body.scopes.forEach(scope => hook(scope.source));
+						break;
+					case 'setFunctionBreakpoints':
+						(<DebugProtocol.SetFunctionBreakpointsResponse>response).body.breakpoints.forEach(bp => hook(bp.source));
+						break;
+					case 'setBreakpoints':
+						(<DebugProtocol.SetBreakpointsResponse>response).body.breakpoints.forEach(bp => hook(bp.source));
+						break;
+					default:
+						break;
+				}
+			}
+			break;
 	}
 }
