@@ -8,41 +8,75 @@ import { NodeKernel } from './kernel';
 
 export class Project {
 
-	readonly concatDoc: vscode.NotebookConcatTextDocument | undefined;
 	private kernel: NodeKernel | undefined;
 
+	private document?: vscode.NotebookDocument;
+	private debugging = false;
+	private debuggerActive = false;
+
+
 	constructor(doc?: vscode.NotebookDocument) {
-		if (doc) {
-			this.concatDoc = vscode.notebook.createConcatTextDocument(doc);
-		}
+		this.document = doc;
 	}
 
-	public async start() {
-
+	public async startKernel() {
 		if (!this.kernel) {
 			this.kernel = new NodeKernel();
-
 			await this.kernel.start();
-
-			vscode.debug.startDebugging(undefined, this.kernel.getDebugConfiguration()).then(() => {
-				console.log('ok');
-			}, e =>{
-				console.log('error ' + e);
-			});
 		}
 	}
 
-	public stop() {
+	public stopKernel() {
 		if (this.kernel) {
 			this.kernel.stop();
 			this.kernel = undefined;
 		}
 	}
 
+	private async stopDebugger() {
+		if (this.debuggerActive) {
+			await vscode.commands.executeCommand('workbench.action.debug.stop');
+			// stop debugging
+			this.debuggerActive = false;
+		}
+	}
+
+	public async restartKernel() {
+		await this.stopDebugger();
+		await this.stopKernel();
+		await this.startKernel();
+	}
+
+	public async toggleDebugging(document: vscode.NotebookDocument) {
+
+		if (this.debugging) {
+			this.stopDebugger();
+		}
+
+		this.debugging = !this.debugging;
+
+		for (let cell of document.cells) {
+			if (cell.cellKind === vscode.CellKind.Code) {
+				cell.metadata.breakpointMargin = this.debugging;
+			}
+		}
+	}
+
 	public async eval(uri: vscode.Uri, data: string): Promise<string> {
 
-		await this.start();
+		await this.startKernel();
+
 		if (this.kernel) {
+			if (this.debugging) {
+				if (!this.debuggerActive) {
+					try {
+						await vscode.debug.startDebugging(undefined, this.kernel.getDebugConfiguration());
+						this.debuggerActive = true;
+					} catch(err) {
+						console.log(`error: ${err}`);
+					}
+				}
+			}
 			return this.kernel.eval(uri, data);
 		}
 		return 'no kernel';

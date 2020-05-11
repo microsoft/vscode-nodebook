@@ -140,7 +140,7 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 		}
 	}
 
-	createDebugAdapterTracker(session: vscode.DebugSession) : vscode.ProviderResult<vscode.DebugAdapterTracker> {
+	createDebugAdapterTracker(_session: vscode.DebugSession) : vscode.ProviderResult<vscode.DebugAdapterTracker> {
 
 		return <vscode.DebugAdapterTracker> {
 			onWillReceiveMessage: (m: DebugProtocol.ProtocolMessage) => {

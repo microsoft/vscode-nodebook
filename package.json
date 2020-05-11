@@ -34,7 +34,33 @@
 					}
 				]
 			}
-		]
+		],
+		"commands": [
+			{
+				"title": "Toggle Debugging",
+				"command": "nodebook.toggleDebugging",
+				"icon": "$(bug)"
+			},
+			{
+				"title": "Restart Kernel",
+				"command": "nodebook.restartKernel",
+				"icon": "$(issue-reopened)"
+			}
+		],
+		"menus": {
+			"editor/title": [
+				{
+					"command": "nodebook.toggleDebugging",
+					"when": "notebookEditorFocused",
+					"group": "navigation@1"
+				},
+				{
+					"command": "nodebook.restartKernel",
+					"when": "notebookEditorFocused",
+					"group": "navigation@2"
+				}
+			]
+		}
 	},
 	"scripts": {
 		"vscode:prepublish": "yarn run compile",

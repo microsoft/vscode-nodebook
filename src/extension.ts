@@ -14,8 +14,25 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer)));
 
+	context.subscriptions.push(vscode.commands.registerCommand('nodebook.toggleDebugging', () => {
+		if (vscode.notebook.activeNotebookEditor) {
+			const { document } = vscode.notebook.activeNotebookEditor;
+			const project = projectContainer.lookupProject(document.uri);
+			project.toggleDebugging(document);
+		}
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('nodebook.restartKernel', () => {
+		if (vscode.notebook.activeNotebookEditor) {
+			const { document } = vscode.notebook.activeNotebookEditor;
+			const project = projectContainer.lookupProject(document.uri);
+			project.restartKernel();
+		}
+	}));
+
+	/*
 	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('node', {
-		provideDebugConfigurations(folder: vscode.WorkspaceFolder) {
+		provideDebugConfigurations(_folder: vscode.WorkspaceFolder) {
 			return [
 				{
 					name: 'Debug Nodebook',
@@ -26,6 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
 			];
 		}
 	}, vscode.DebugConfigurationProviderTriggerKind.Dynamic));
+	*/
 }
 
 export function deactivate() {

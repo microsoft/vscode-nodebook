@@ -25,19 +25,16 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 
 		this._localDisposables.push(vscode.notebook.onDidOpenNotebookDocument(document => {
 
-			if (this.container.lookupProject(document.uri, false)) {
-				return;
+			if (!this.container.lookupProject(document.uri, false)) {
+				// (1) register a new project for this notebook
+
+				const project = new Project(document);
+				this.container.register(
+					document.uri,
+					project,
+					uri => document.cells.some(cell => cell.uri.toString() === uri.toString()) || (uri.toString() === document.uri.toString()),
+				);
 			}
-
-			// (1) register a new project for this notebook
-			// todo@API add new cells
-
-			const project = new Project();
-			this.container.register(
-				document.uri,
-				project,
-				uri => document.cells.some(cell => cell.uri.toString() === uri.toString()),
-			);
 		}));
 
 		this._localDisposables.push(vscode.notebook.onDidCloseNotebookDocument(() => {
@@ -70,7 +67,11 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 				language: item.language,
 				cellKind: item.kind,
 				outputs: [],
-				metadata: { editable: item.editable ?? true, runnable: true }
+				metadata: {
+					editable: true,
+					runnable: true,
+					breakpointMargin: false
+				 }
 			}))
 		};
 
@@ -83,7 +84,7 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 
 			const project = this.container.lookupProject(document.uri);
 			if (project) {
-				project.stop();
+				project.stopKernel();
 			}
 
 			// run them all
@@ -129,7 +130,6 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 				kind: cell.cellKind,
 				language: cell.language,
 				value: cell.document.getText(),
-				editable: cell.metadata.editable
 			});
 		}
 		await vscode.workspace.fs.writeFile(targetResource, Buffer.from(JSON.stringify(contents)));
