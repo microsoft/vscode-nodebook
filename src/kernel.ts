@@ -6,12 +6,11 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
+import * as PATH from 'path';
 import * as os from 'os';
 const rmdir = require('rimraf');
 const getPort = require('get-port');
 
-const PREVIEW_JS_DEBUG = false;
 
 interface NodeCellInfo {
 	uri: vscode.Uri;
@@ -21,7 +20,7 @@ interface NodeCellInfo {
 	fileName: string;
 }
 
-export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
+export class NodeKernel {
 
 	private nodeRuntime: cp.ChildProcess | undefined;
 	private buffer: string;
@@ -36,10 +35,6 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 
 	public async start() {
 		if (!this.nodeRuntime) {
-
-			// hook Source path conversion
-			const debugTypes = PREVIEW_JS_DEBUG ? ['pwa-node', 'pwa-chrome'] : ['node', 'node2'];
-			this.disposables.push(...debugTypes.map(dt => vscode.debug.registerDebugAdapterTrackerFactory(dt, this)));
 
 			this.port = await getPort();
 			this.nodeRuntime = cp.spawn('node', [
@@ -69,6 +64,15 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 		}
 	}
 
+	public getDebugPort() : number | undefined {
+		return this.port;
+	}
+
+	public async restart() {
+		await this.stop();
+		await this.start();
+	}
+
 	public stop() {
 		this.disposables.forEach(d => d.dispose());
 		this.disposables = [];
@@ -79,7 +83,7 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 		const info = this.getInfo(uri);
 		if (info) {
 			if (!this.tmp) {
-				this.tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vscode-nodebooks-'));
+				this.tmp = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebooks-'));
 				this.disposables.push({
 					dispose: () => {
 						rmdir(this.tmp);
@@ -103,16 +107,30 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 		return '';
 	}
 
-	public getDebugConfiguration() : vscode.DebugConfiguration {
-		return {
-			name: 'nodebook',
-			request: 'attach',
-			type: PREVIEW_JS_DEBUG ? 'pwa-node' : 'node',
-			port: this.port,
-			timeout: 100000,
-			outputCapture: 'std',
-			internalConsoleOptions: 'neverOpen'
-		};
+	public mapFromCellUri(s: DebugProtocol.Source) {
+		if (s.path && s.path.indexOf('vscode-notebook:') === 0) {
+			const uri = vscode.Uri.parse(s.path);
+			const info = this.getInfo(uri);
+			if (info) {
+				s.path = info.path;
+				s.sourceReference = info.ref;
+			}
+		}
+	}
+
+	public mapToCellUri(s: DebugProtocol.Source) {
+		// check for all nodebook cell related sources (DA -> VS Code)
+		// TODO: map something back to Engine
+		if (s.path && s.path.indexOf('nodebook_cell_') >= 0) {
+			// this can only happen if we have created a dummy file for a cell previously, so we have a uri->file mapping (that lacks the source reference)
+			let info = this.map.get(s.path);
+			if (info) {
+				info.ref = s.sourceReference;
+				s.name = info.name;
+				s.path = info.uri.toString();
+				s.sourceReference = 0;
+			}
+		}
 	}
 
 	// ---- private ----
@@ -123,12 +141,13 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 			const cellNr = cellInfo.cell+1;
 			const fileName = `nodebook_cell_${cellNr}.js`;
 			const lookupName = `<node_internals>/${fileName}`
+			const notebookFileName = PATH.basename(uri.path);
 			let info = this.map.get(lookupName);
 			if (!info) {
 				info = {
 					uri: uri,
 					ref: 0,
-					name: `foo.nodebook, cell ${cellNr}`,
+					name: notebookFileName,
 					path: lookupName,
 					fileName: fileName
 				};
@@ -138,119 +157,5 @@ export class NodeKernel implements vscode.DebugAdapterTrackerFactory {
 		} catch(e) {
 			return undefined;
 		}
-	}
-
-	createDebugAdapterTracker(_session: vscode.DebugSession) : vscode.ProviderResult<vscode.DebugAdapterTracker> {
-
-		return <vscode.DebugAdapterTracker> {
-			onWillReceiveMessage: (m: DebugProtocol.ProtocolMessage) => {
-				// VS Code -> DA
-				visitSources(m, s => {
-					if (typeof s.path === 'string') {
-						// TODO: map something to Engine
-						if (s.path.indexOf('vscode-notebook:') === 0) {
-							const uri = vscode.Uri.parse(s.path);
-							const info = this.getInfo(uri);
-							if (info) {
-								s.path = info.path;
-								s.sourceReference = info.ref;
-							}
-						}
-					}
-				});
-			},
-			onDidSendMessage: (m: DebugProtocol.ProtocolMessage) => {
-				// DA -> VS Code
-				visitSources(m, s => {
-					// check for all nodebook cell related sources (DA -> VS Code)
-					// TODO: map something back to Engine
-					if (s.path && s.path.indexOf('nodebook_cell_') >= 0) {
-						// this can only happen if we have created a dummy file for a cell previously, so we have a uri->file mapping (that lacks the source reference)
-						let info = this.map.get(s.path);
-						if (info) {
-							info.ref = s.sourceReference;
-							s.name = info.name;
-							s.path = info.uri.toString();
-							s.sourceReference = 0;
-						}
-					}
-				});
-			}
-		}
-	}
-}
-
-// this vistor could be moved into the DAP npm module (it must be kept in sync with the spec)
-function visitSources(msg: DebugProtocol.ProtocolMessage, sourceHook: (source: DebugProtocol.Source) => void): void {
-
-	const hook = (source: DebugProtocol.Source | undefined) => {
-		if (source) {
-			sourceHook(source);
-		}
-	};
-
-	switch (msg.type) {
-		case 'event':
-			const event = <DebugProtocol.Event>msg;
-			switch (event.event) {
-				case 'output':
-					hook((<DebugProtocol.OutputEvent>event).body.source);
-					break;
-				case 'loadedSource':
-					hook((<DebugProtocol.LoadedSourceEvent>event).body.source);
-					break;
-				case 'breakpoint':
-					hook((<DebugProtocol.BreakpointEvent>event).body.breakpoint.source);
-					break;
-				default:
-					break;
-			}
-			break;
-		case 'request':
-			const request = <DebugProtocol.Request>msg;
-			switch (request.command) {
-				case 'setBreakpoints':
-					hook((<DebugProtocol.SetBreakpointsArguments>request.arguments).source);
-					break;
-				case 'breakpointLocations':
-					hook((<DebugProtocol.BreakpointLocationsArguments>request.arguments).source);
-					break;
-				case 'source':
-					hook((<DebugProtocol.SourceArguments>request.arguments).source);
-					break;
-				case 'gotoTargets':
-					hook((<DebugProtocol.GotoTargetsArguments>request.arguments).source);
-					break;
-				case 'launchVSCode':
-					//request.arguments.args.forEach(arg => fixSourcePath(arg));
-					break;
-				default:
-					break;
-			}
-			break;
-		case 'response':
-			const response = <DebugProtocol.Response>msg;
-			if (response.success && response.body) {
-				switch (response.command) {
-					case 'stackTrace':
-						(<DebugProtocol.StackTraceResponse>response).body.stackFrames.forEach(frame => hook(frame.source));
-						break;
-					case 'loadedSources':
-						(<DebugProtocol.LoadedSourcesResponse>response).body.sources.forEach(source => hook(source));
-						break;
-					case 'scopes':
-						(<DebugProtocol.ScopesResponse>response).body.scopes.forEach(scope => hook(scope.source));
-						break;
-					case 'setFunctionBreakpoints':
-						(<DebugProtocol.SetFunctionBreakpointsResponse>response).body.breakpoints.forEach(bp => hook(bp.source));
-						break;
-					case 'setBreakpoints':
-						(<DebugProtocol.SetBreakpointsResponse>response).body.breakpoints.forEach(bp => hook(bp.source));
-						break;
-					default:
-						break;
-				}
-			}
-			break;
 	}
 }

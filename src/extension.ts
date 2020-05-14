@@ -18,7 +18,9 @@ export function activate(context: vscode.ExtensionContext) {
 		if (vscode.notebook.activeNotebookEditor) {
 			const { document } = vscode.notebook.activeNotebookEditor;
 			const project = projectContainer.lookupProject(document.uri);
-			project.toggleDebugging(document);
+			if (project) {
+				project.toggleDebugging(document);
+			}
 		}
 	}));
 
@@ -26,7 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
 		if (vscode.notebook.activeNotebookEditor) {
 			const { document } = vscode.notebook.activeNotebookEditor;
 			const project = projectContainer.lookupProject(document.uri);
-			project.restartKernel();
+			if (project) {
+				project.restartKernel();
+			}
 		}
 	}));
 
