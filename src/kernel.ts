@@ -83,7 +83,7 @@ export class NodeKernel {
 		const info = this.getInfo(uri);
 		if (info) {
 			if (!this.tmp) {
-				this.tmp = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebooks-'));
+				this.tmp = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
 				this.disposables.push({
 					dispose: () => {
 						rmdir(this.tmp);

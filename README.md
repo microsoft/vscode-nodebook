@@ -1,6 +1,6 @@
 # vscode-nodebook README
 
-This is the README for your extension "vscode-nodebooks". After writing up a brief description, we recommend including the following sections.
+This is the README for your extension "vscode-nodebook". After writing up a brief description, we recommend including the following sections.
 
 ## Features
 

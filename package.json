@@ -1,7 +1,7 @@
 {
-	"name": "vscode-nodebooks",
-	"displayName": "Nodebooks",
-	"description": "Node.js Notebooks for VS Code",
+	"name": "vscode-nodebook",
+	"displayName": "Nodebook",
+	"description": "Node.js Notebook for VS Code",
 	"version": "0.0.1",
 	"enableProposedApi": true,
 	"engines": {
