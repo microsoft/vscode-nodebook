@@ -24,7 +24,6 @@ export class NodeKernel {
 
 	private nodeRuntime: cp.ChildProcess | undefined;
 	private buffer: string;
-	private disposables: vscode.Disposable[] = [];
 	private map: Map<string, NodeCellInfo> = new Map();
 	private tmp?: string;
 	private port?: number;
@@ -42,14 +41,6 @@ export class NodeKernel {
 				'-e',
 				"require('repl').start({ prompt: '', ignoreUndefined: true })"
 			]);
-			this.disposables.push({
-				dispose: () => {
-					if (this.nodeRuntime) {
-						this.nodeRuntime.kill();
-						this.nodeRuntime = undefined;
-					}
-				}
-			});
 
 			if (this.nodeRuntime.stdout) {
 				this.nodeRuntime.stdout.on('data', (data: Buffer) => {
@@ -74,8 +65,21 @@ export class NodeKernel {
 	}
 
 	public stop() {
-		this.disposables.forEach(d => d.dispose());
-		this.disposables = [];
+
+		if (this.nodeRuntime) {
+			this.nodeRuntime.kill();
+			this.nodeRuntime = undefined;
+		}
+
+		if (this.tmp) {
+			const t = this.tmp;
+			this.tmp = undefined;
+			rmdir(t, { glob: false }, (err: Error | undefined) => {
+				if (err) {
+					console.log(err);
+				}
+			});
+		}
 	}
 
 	public async eval(uri: vscode.Uri, data: string): Promise<string> {
@@ -84,11 +88,6 @@ export class NodeKernel {
 		if (info) {
 			if (!this.tmp) {
 				this.tmp = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
-				this.disposables.push({
-					dispose: () => {
-						rmdir(this.tmp);
-					}
-				});
 			}
 			const pathName = `${this.tmp}/${info.fileName}`;
 			data += `\n//@ sourceURL=${info.fileName}`
@@ -108,7 +107,7 @@ export class NodeKernel {
 	}
 
 	public mapFromCellUri(s: DebugProtocol.Source) {
-		if (s.path && s.path.indexOf('vscode-notebook:') === 0) {
+		if (s.path && s.path.indexOf('vscode-notebook-cell:') === 0) {
 			const uri = vscode.Uri.parse(s.path);
 			const info = this.getInfo(uri);
 			if (info) {
