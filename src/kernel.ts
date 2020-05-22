@@ -136,17 +136,16 @@ export class NodeKernel {
 
 	private getInfo(uri: vscode.Uri): NodeCellInfo | undefined {
 		try {
-			const cellInfo = JSON.parse(uri.query);
-			const cellNr = cellInfo.cell+1;
+			const cellNr = parseInt(uri.fragment) + 1;
 			const fileName = `nodebook_cell_${cellNr}.js`;
 			const lookupName = `<node_internals>/${fileName}`
-			const notebookFileName = PATH.basename(uri.path);
+			const sourceName = `${PATH.basename(uri.path)}, Cell ${cellNr}`;
 			let info = this.map.get(lookupName);
 			if (!info) {
 				info = {
 					uri: uri,
 					ref: 0,
-					name: notebookFileName,
+					name: sourceName,
 					path: lookupName,
 					fileName: fileName
 				};

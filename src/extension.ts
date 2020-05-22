@@ -7,47 +7,41 @@ import * as vscode from 'vscode';
 
 import { ProjectContainer } from './project';
 import { NodebookContentProvider } from './nodebookProvider';
+import { NotebookKernel } from './nodebookKernel';
 
 export function activate(context: vscode.ExtensionContext) {
 
 	const projectContainer = new ProjectContainer();
 
-	context.subscriptions.push(vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer)));
+	context.subscriptions.push(
 
-	context.subscriptions.push(vscode.commands.registerCommand('nodebook.toggleDebugging', () => {
-		if (vscode.notebook.activeNotebookEditor) {
-			const { document } = vscode.notebook.activeNotebookEditor;
-			const project = projectContainer.lookupProject(document.uri);
-			if (project) {
-				project.toggleDebugging(document);
-			}
-		}
-	}));
+		vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer)),
 
-	context.subscriptions.push(vscode.commands.registerCommand('nodebook.restartKernel', () => {
-		if (vscode.notebook.activeNotebookEditor) {
-			const { document } = vscode.notebook.activeNotebookEditor;
-			const project = projectContainer.lookupProject(document.uri);
-			if (project) {
-				project.restartKernel();
-			}
-		}
-	}));
+		vscode.notebook.registerNotebookKernel('nodebook-kernel', ['*'], new NotebookKernel(projectContainer))
+	);
 
-	/*
-	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('node', {
-		provideDebugConfigurations(_folder: vscode.WorkspaceFolder) {
-			return [
-				{
-					name: 'Debug Nodebook',
-					type: 'node',
-					request: 'attach',
-					port: 12345
+	context.subscriptions.push(
+
+		vscode.commands.registerCommand('nodebook.toggleDebugging', () => {
+			if (vscode.notebook.activeNotebookEditor) {
+				const { document } = vscode.notebook.activeNotebookEditor;
+				const project = projectContainer.lookupProject(document.uri);
+				if (project) {
+					project.toggleDebugging(document);
 				}
-			];
-		}
-	}, vscode.DebugConfigurationProviderTriggerKind.Dynamic));
-	*/
+			}
+		}),
+
+		vscode.commands.registerCommand('nodebook.restartKernel', () => {
+			if (vscode.notebook.activeNotebookEditor) {
+				const { document } = vscode.notebook.activeNotebookEditor;
+				const project = projectContainer.lookupProject(document.uri);
+				if (project) {
+					project.restartKernel();
+				}
+			}
+		})
+	);
 }
 
 export function deactivate() {

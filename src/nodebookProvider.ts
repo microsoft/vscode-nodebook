@@ -7,8 +7,6 @@ import * as vscode from 'vscode';
 import { Project, ProjectContainer } from './project';
 import { NotebookDocumentEditEvent } from 'vscode';
 
-const debugTypes = ['node', 'node2', 'pwa-node', 'pwa-chrome'];
-
 interface RawNotebookCell {
 	language: string;
 	value: string;
@@ -18,12 +16,9 @@ interface RawNotebookCell {
 
 export class NodebookContentProvider implements vscode.NotebookContentProvider {
 
-	private _localDisposables: vscode.Disposable[];
-	private readonly container: ProjectContainer
+	private _localDisposables: vscode.Disposable[] = [];
 
-	constructor(container: ProjectContainer) {
-		this.container = container;
-		this._localDisposables = [];
+	constructor(private readonly container: ProjectContainer) {
 
 		// hook global event handlers here once
 
@@ -48,37 +43,6 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 				project.dispose();
 			}
 		}));
-
-		this._localDisposables.push(vscode.debug.onDidStartDebugSession(session => {
-			if (session.configuration.__notebookID) {
-				const project = this.container.lookupProject(session.configuration.__notebookID);
-				if (project) {
-					project.addDebugSession(session);
-				}
-			}
-		}));
-
-		this._localDisposables.push(vscode.debug.onDidTerminateDebugSession(session => {
-			if (session.configuration.__notebookID) {
-				const project = this.container.lookupProject(session.configuration.__notebookID);
-				if (project) {
-					project.removeDebugSession(session);
-				}
-			}
-		}));
-
-		// hook Source path conversion
-		this._localDisposables.push(...debugTypes.map(dt => vscode.debug.registerDebugAdapterTrackerFactory(dt, {
-			createDebugAdapterTracker: (session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterTracker> => {
-				if (session.configuration.__notebookID) {
-					const project = this.container.lookupProject(session.configuration.__notebookID);
-					if (project) {
-						return project.createTracker();
-					}
-				}
-				return undefined;	// no tracker
-			}
-		})));
 	}
 
 	onDidChangeNotebook: vscode.Event<NotebookDocumentEditEvent> = new vscode.EventEmitter<NotebookDocumentEditEvent>().event;
@@ -115,37 +79,6 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 		};
 
 		return notebookData;
-	}
-
-	async executeCell(document: vscode.NotebookDocument, cell: vscode.NotebookCell | undefined, token: vscode.CancellationToken): Promise<void> {
-
-		if (!cell) {
-
-			const project = this.container.lookupProject(document.uri);
-			if (project) {
-				project.restartKernel();
-			}
-
-			// run them all
-			for (let cell of document.cells) {
-				if (cell.cellKind === vscode.CellKind.Code && cell.metadata.runnable) {
-					await this.executeCell(document, cell, token);
-				}
-			}
-			return;
-		}
-
-		let output = '';
-		const project = this.container.lookupProject(cell.uri);
-		if (project) {
-			const data = cell.document.getText();
-			output = await project.eval(cell.uri, data);
-		}
-
-		cell.outputs = [{
-			outputKind: vscode.CellOutputKind.Text,
-			text: output
-		}];
 	}
 
 	public saveNotebook(document: vscode.NotebookDocument, _cancellation: vscode.CancellationToken): Promise<void> {
