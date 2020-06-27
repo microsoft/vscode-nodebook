@@ -7,8 +7,7 @@ import { ProjectContainer } from './project';
 
 const debugTypes = ['node', 'node2', 'pwa-node', 'pwa-chrome'];
 
-/**
- */
+
 export class NotebookKernel implements vscode.NotebookKernel {
 
 	public label = 'Node.js Kernel';

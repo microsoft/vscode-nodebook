@@ -12,15 +12,12 @@ import { NotebookKernel } from './nodebookKernel';
 export function activate(context: vscode.ExtensionContext) {
 
 	const projectContainer = new ProjectContainer();
+	const notebookKernel = new NotebookKernel(projectContainer);
 
 	context.subscriptions.push(
 
-		vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer)),
-
-		vscode.notebook.registerNotebookKernel('nodebook-kernel', ['*'], new NotebookKernel(projectContainer))
-	);
-
-	context.subscriptions.push(
+		vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer, notebookKernel)),
+		//vscode.notebook.registerNotebookKernel('nodebook-kernel', ['*'], notebookKernel)
 
 		vscode.commands.registerCommand('nodebook.toggleDebugging', () => {
 			if (vscode.notebook.activeNotebookEditor) {

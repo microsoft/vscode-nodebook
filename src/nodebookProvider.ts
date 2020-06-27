@@ -18,7 +18,11 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 
 	private _localDisposables: vscode.Disposable[] = [];
 
-	constructor(private readonly container: ProjectContainer) {
+ 	kernel?: vscode.NotebookKernel;
+
+	constructor(private readonly container: ProjectContainer, kernel: vscode.NotebookKernel) {
+
+		this.kernel = kernel;
 
 		// hook global event handlers here once
 
@@ -87,6 +91,18 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 
 	public saveNotebookAs(targetResource: vscode.Uri, document: vscode.NotebookDocument, _cancellation: vscode.CancellationToken): Promise<void> {
 		return this._save(document, targetResource);
+	}
+
+	async resolveNotebook(_document: vscode.NotebookDocument, _webview: vscode.NotebookCommunication): Promise<void> {
+		// nothing
+	}
+
+	async backupNotebook(document: vscode.NotebookDocument, context: vscode.NotebookDocumentBackupContext, _cancellation: vscode.CancellationToken): Promise<vscode.NotebookDocumentBackup> {
+		await this._save(document, context.destination);
+		return {
+			id: context.destination.toString(),
+			delete: () => vscode.workspace.fs.delete(context.destination)
+		};
 	}
 
 	public dispose() {
