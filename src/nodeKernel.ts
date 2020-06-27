@@ -2,12 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as PATH from 'path';
 import * as os from 'os';
+import { DebugProtocol } from 'vscode-debugprotocol';
 const rmdir = require('rimraf');
 const getPort = require('get-port');
 

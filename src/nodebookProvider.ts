@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { Project, ProjectContainer } from './project';
+import { Nodebook } from './nodebook';
 import { NotebookDocumentEditEvent } from 'vscode';
 
 interface RawNotebookCell {
@@ -14,42 +14,94 @@ interface RawNotebookCell {
 	editable?: boolean;
 }
 
-export class NodebookContentProvider implements vscode.NotebookContentProvider {
+interface ProjectAssociation {
+	(key: string): boolean;
+}
+
+const debugTypes = ['node', 'node2', 'pwa-node', 'pwa-chrome'];
+
+export class NodebookContentProvider implements vscode.NotebookContentProvider, vscode.NotebookKernel {
 
 	private _localDisposables: vscode.Disposable[] = [];
+	private readonly _associations = new Map<string, [ProjectAssociation, Nodebook]>();
 
- 	kernel?: vscode.NotebookKernel;
-
-	constructor(private readonly container: ProjectContainer, kernel: vscode.NotebookKernel) {
-
-		this.kernel = kernel;
-
-		// hook global event handlers here once
-
-		this._localDisposables.push(vscode.notebook.onDidOpenNotebookDocument(document => {
-
-			const docKey = document.uri.toString();
-			if (!this.container.lookupProject(docKey)) {
-				// (1) register a new project for this notebook
-
-				const project = new Project(document);
-				this.container.register(
-					docKey,
-					project,
-					key => document.cells.some(cell => cell.uri.toString() === key) || (key === docKey),
-				);
-			}
-		}));
-
-		this._localDisposables.push(vscode.notebook.onDidCloseNotebookDocument(document => {
-			const project = this.container.unregister(document.uri.toString());
-			if (project) {
-				project.dispose();
-			}
-		}));
-	}
+	public label = 'Node.js Kernel';
+ 	public kernel = this;
 
 	onDidChangeNotebook: vscode.Event<NotebookDocumentEditEvent> = new vscode.EventEmitter<NotebookDocumentEditEvent>().event;
+
+	constructor() {
+
+		this._localDisposables.push(
+
+			vscode.notebook.onDidOpenNotebookDocument(document => {
+				const docKey = document.uri.toString();
+				if (!this.lookupNodebook(docKey)) {
+					const project = new Nodebook(document);
+					this.register(
+						docKey,
+						project,
+						key => document.cells.some(cell => cell.uri.toString() === key) || (key === docKey),
+					);
+				}
+			}),
+
+			vscode.notebook.onDidCloseNotebookDocument(document => {
+				const project = this.unregister(document.uri.toString());
+				if (project) {
+					project.dispose();
+				}
+			}),
+
+			vscode.debug.onDidStartDebugSession(session => {
+				if (session.configuration.__notebookID) {
+					const project = this.lookupNodebook(session.configuration.__notebookID);
+					if (project) {
+						project.addDebugSession(session);
+					}
+				}
+			}),
+
+			vscode.debug.onDidTerminateDebugSession(session => {
+				if (session.configuration.__notebookID) {
+					const project = this.lookupNodebook(session.configuration.__notebookID);
+					if (project) {
+						project.removeDebugSession(session);
+					}
+				}
+			}),
+
+			// hook Source path conversion
+			...debugTypes.map(dt => vscode.debug.registerDebugAdapterTrackerFactory(dt, {
+				createDebugAdapterTracker: (session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterTracker> => {
+					if (session.configuration.__notebookID) {
+						const project = this.lookupNodebook(session.configuration.__notebookID);
+						if (project) {
+							return project.createTracker();
+						}
+					}
+					return undefined;	// no tracker
+				}
+			}))
+		);
+	}
+
+	public lookupNodebook(keyOrUri: string | vscode.Uri | undefined): Nodebook | undefined {
+		if (keyOrUri) {
+			let key: string;
+			if (typeof keyOrUri === 'string') {
+				key = keyOrUri;
+			} else {
+				key = keyOrUri.toString();
+			}
+			for (let [association, value] of this._associations.values()) {
+				if (association(key)) {
+					return value;
+				}
+			}
+		}
+		return undefined;
+	}
 
 	async openNotebook(uri: vscode.Uri): Promise<vscode.NotebookData> {
 
@@ -105,6 +157,47 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 		};
 	}
 
+	public async executeCell(document: vscode.NotebookDocument, cell: vscode.NotebookCell, token: vscode.CancellationToken): Promise<void> {
+
+		if (!cell) {
+
+			const project = this.lookupNodebook(document.uri);
+			if (project) {
+				project.restartKernel();
+			}
+
+			// run them all
+			for (let cell of document.cells) {
+				if (cell.cellKind === vscode.CellKind.Code && cell.metadata.runnable) {
+					await this.executeCell(document, cell, token);
+				}
+			}
+			return;
+		}
+
+		let output = '';
+		const project = this.lookupNodebook(cell.uri);
+		if (project) {
+			const data = cell.document.getText();
+			output = await project.eval(cell.uri, data);
+		}
+
+		cell.outputs = [{
+			outputKind: vscode.CellOutputKind.Text,
+			text: output
+		}];
+	}
+
+	public async executeAllCells(document: vscode.NotebookDocument, token: vscode.CancellationToken): Promise<void> {
+
+	  for (const cell of document.cells) {
+		if (token.isCancellationRequested) {
+		  break;
+		}
+		await this.executeCell(document, cell, token);
+	  }
+	}
+
 	public dispose() {
 		this._localDisposables.forEach(d => d.dispose());
 	}
@@ -121,5 +214,17 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider {
 			});
 		}
 		await vscode.workspace.fs.writeFile(targetResource, Buffer.from(JSON.stringify(contents)));
+	}
+
+	private register(key: string, project: Nodebook, association: ProjectAssociation) {
+		this._associations.set(key, [association, project]);
+	}
+
+	private unregister(key: string): Nodebook | undefined {
+		const project = this.lookupNodebook(key);
+		if (project) {
+			this._associations.delete(key);
+		}
+		return project;
 	}
 }

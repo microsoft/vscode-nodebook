@@ -2,29 +2,23 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-
 import * as vscode from 'vscode';
-
-import { ProjectContainer } from './project';
 import { NodebookContentProvider } from './nodebookProvider';
-import { NotebookKernel } from './nodebookKernel';
 
 export function activate(context: vscode.ExtensionContext) {
 
-	const projectContainer = new ProjectContainer();
-	const notebookKernel = new NotebookKernel(projectContainer);
+	const nodebookContentProvider = new NodebookContentProvider();
 
 	context.subscriptions.push(
 
-		vscode.notebook.registerNotebookContentProvider('nodebook', new NodebookContentProvider(projectContainer, notebookKernel)),
-		//vscode.notebook.registerNotebookKernel('nodebook-kernel', ['*'], notebookKernel)
+		vscode.notebook.registerNotebookContentProvider('nodebook', nodebookContentProvider),
 
 		vscode.commands.registerCommand('nodebook.toggleDebugging', () => {
 			if (vscode.notebook.activeNotebookEditor) {
 				const { document } = vscode.notebook.activeNotebookEditor;
-				const project = projectContainer.lookupProject(document.uri);
-				if (project) {
-					project.toggleDebugging(document);
+				const nodebook = nodebookContentProvider.lookupNodebook(document.uri);
+				if (nodebook) {
+					nodebook.toggleDebugging(document);
 				}
 			}
 		}),
@@ -32,9 +26,9 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('nodebook.restartKernel', () => {
 			if (vscode.notebook.activeNotebookEditor) {
 				const { document } = vscode.notebook.activeNotebookEditor;
-				const project = projectContainer.lookupProject(document.uri);
-				if (project) {
-					project.restartKernel();
+				const nodebook = nodebookContentProvider.lookupNodebook(document.uri);
+				if (nodebook) {
+					nodebook.restartKernel();
 				}
 			}
 		})

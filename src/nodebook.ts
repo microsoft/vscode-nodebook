@@ -4,30 +4,31 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { NodeKernel } from './kernel';
+import { NodeKernel } from './nodeKernel';
+import { DebugProtocol } from 'vscode-debugprotocol';
 
-export class Project implements vscode.Disposable {
+export class Nodebook implements vscode.Disposable {
 
 	private document: vscode.NotebookDocument;
-	private kernel: NodeKernel;
+	private nodeKernel: NodeKernel;
 	private debugging = false;
 	private disposables: vscode.Disposable[] = [];
 	private activeDebugSession: vscode.DebugSession | undefined;
 
 	constructor(doc: vscode.NotebookDocument) {
 		this.document = doc;
-		this.kernel = new NodeKernel();
+		this.nodeKernel = new NodeKernel();
 	}
 
 	async dispose() {
 		await this.stopDebugger();
-		this.kernel.stop();
+		this.nodeKernel.stop();
 	}
 
 	public async restartKernel() {
 		await this.stopDebugger();
 		await vscode.commands.executeCommand('notebook.clearAllCellsOutputs');
-		await this.kernel.restart();
+		await this.nodeKernel.restart();
 		if (this.debugging) {
 			await this.startDebugger();
 		}
@@ -50,12 +51,12 @@ export class Project implements vscode.Disposable {
 
 	public async eval(uri: vscode.Uri, data: string): Promise<string> {
 
-		await this.kernel.start();
+		await this.nodeKernel.start();
 
 		if (this.debugging) {
 			await this.startDebugger();
 		}
-		return this.kernel.eval(uri, data);
+		return this.nodeKernel.eval(uri, data);
 	}
 
 	public addDebugSession(session: vscode.DebugSession) {
@@ -81,7 +82,7 @@ export class Project implements vscode.Disposable {
 				// VS Code -> DA
 				visitSources(m, s => {
 					if (s && typeof s.path === 'string') {
-						this.kernel.mapFromCellUri(s);
+						this.nodeKernel.mapFromCellUri(s);
 					}
 				});
 			},
@@ -89,7 +90,7 @@ export class Project implements vscode.Disposable {
 				// DA -> VS Code
 				visitSources(m, s => {
 					if (s) {
-						this.kernel.mapToCellUri(s);
+						this.nodeKernel.mapToCellUri(s);
 					}
 				});
 			}
@@ -104,7 +105,7 @@ export class Project implements vscode.Disposable {
 				name: 'nodebook',
 				request: 'attach',
 				type: 'node',
-				port: this.kernel.getDebugPort(),
+				port: this.nodeKernel.getDebugPort(),
 				timeout: 100000,
 				outputCapture: 'std',
 				internalConsoleOptions: 'neverOpen'
@@ -193,43 +194,5 @@ function visitSources(msg: DebugProtocol.ProtocolMessage, sourceHook: (source: D
 				}
 			}
 			break;
-	}
-}
-
-export interface ProjectAssociation {
-	(key: string): boolean;
-}
-
-export class ProjectContainer {
-
-	private readonly _associations = new Map<string, [ProjectAssociation, Project]>();
-
-	register(key: string, project: Project, association: ProjectAssociation) {
-		this._associations.set(key, [association, project]);
-	}
-
-	unregister(key: string): Project | undefined {
-		const project = this.lookupProject(key);
-		if (project) {
-			this._associations.delete(key);
-		}
-		return project;
-	}
-
-	lookupProject(keyOrUri: string | vscode.Uri | undefined): Project | undefined {
-		if (keyOrUri) {
-			let key: string;
-			if (typeof keyOrUri === 'string') {
-				key = keyOrUri;
-			} else {
-				key = keyOrUri.toString();
-			}
-			for (let [association, value] of this._associations.values()) {
-				if (association(key)) {
-					return value;
-				}
-			}
-		}
-		return undefined;
 	}
 }
