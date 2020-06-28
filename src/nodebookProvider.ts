@@ -176,16 +176,28 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider, 
 		}
 
 		let output = '';
-		const project = this.lookupNodebook(cell.uri);
-		if (project) {
-			const data = cell.document.getText();
-			output = await project.eval(cell.uri, data);
+		let error: Error | undefined;
+		const nodebook = this.lookupNodebook(cell.uri);
+		if (nodebook) {
+			try {
+				output = await nodebook.eval(cell);
+			} catch(e) {
+				error = e;
+			}
 		}
-
-		cell.outputs = [{
-			outputKind: vscode.CellOutputKind.Text,
-			text: output
-		}];
+		if (error) {
+			cell.outputs = [{
+				outputKind: vscode.CellOutputKind.Error,
+				evalue: error.toString(),
+				ename: '',
+				traceback: []
+			}];
+		} else {
+			cell.outputs = [{
+				outputKind: vscode.CellOutputKind.Text,
+				text: output
+			}];
+		}
 	}
 
 	public async executeAllCells(document: vscode.NotebookDocument, token: vscode.CancellationToken): Promise<void> {

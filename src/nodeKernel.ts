@@ -2,6 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
@@ -12,39 +13,31 @@ const rmdir = require('rimraf');
 const getPort = require('get-port');
 
 
-interface NodeCellInfo {
-	uri: vscode.Uri;
-	ref: number | undefined;
-	name: string;
-	path: string;
-	fileName: string;
-}
-
 export class NodeKernel {
 
 	private nodeRuntime: cp.ChildProcess | undefined;
-	private buffer: string;
-	private map: Map<string, NodeCellInfo> = new Map();
-	private tmp?: string;
-	private port?: number;
+	private outputBuffer = '';
+	private pathToCellUri: Map<string, vscode.Uri> = new Map();
+	private tmpDirectory?: string;
+	private debugPort?: number;
 
-	constructor() {
-		this.buffer = '';
+	constructor(private document: vscode.NotebookDocument) {
+		this.tmpDirectory = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
 	}
 
 	public async start() {
 		if (!this.nodeRuntime) {
 
-			this.port = await getPort();
+			this.debugPort = await getPort();
 			this.nodeRuntime = cp.spawn('node', [
-				`--inspect=${this.port}`,
+				`--inspect=${this.debugPort}`,
 				'-e',
 				"require('repl').start({ prompt: '', ignoreUndefined: true })"
 			]);
 
 			if (this.nodeRuntime.stdout) {
 				this.nodeRuntime.stdout.on('data', (data: Buffer) => {
-					this.buffer += data.toString();
+					this.outputBuffer += data.toString();
 				});
 			}
 			if (this.nodeRuntime.stderr) {
@@ -55,12 +48,21 @@ export class NodeKernel {
 		}
 	}
 
-	public getDebugPort() : number | undefined {
-		return this.port;
+	public getLaunchConfig() {
+		return {
+			__notebookID: this.document.uri.toString(),
+			name: 'nodebook',
+			request: 'attach',
+			type: 'node',
+			port: this.debugPort,
+			timeout: 100000,
+			outputCapture: 'std',
+			internalConsoleOptions: 'neverOpen'
+		};
 	}
 
 	public async restart() {
-		await this.stop();
+		this.stop();
 		await this.start();
 	}
 
@@ -71,9 +73,9 @@ export class NodeKernel {
 			this.nodeRuntime = undefined;
 		}
 
-		if (this.tmp) {
-			const t = this.tmp;
-			this.tmp = undefined;
+		if (this.tmpDirectory) {
+			const t = this.tmpDirectory;
+			this.tmpDirectory = undefined;
 			rmdir(t, { glob: false }, (err: Error | undefined) => {
 				if (err) {
 					console.log(err);
@@ -82,78 +84,156 @@ export class NodeKernel {
 		}
 	}
 
-	public async eval(uri: vscode.Uri, data: string): Promise<string> {
+	public async eval(cell: vscode.NotebookCell): Promise<string> {
 
-		const info = this.getInfo(uri);
-		if (info) {
-			if (!this.tmp) {
-				this.tmp = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
-			}
-			const pathName = `${this.tmp}/${info.fileName}`;
-			data += `\n//@ sourceURL=${info.fileName}`
-			fs.writeFileSync(pathName, data);
+		const cellPath = this.dumpCell(cell.uri.toString());
+		if (cellPath && this.nodeRuntime && this.nodeRuntime.stdin) {
 
-			if (this.nodeRuntime && this.nodeRuntime.stdin) {
+			this.outputBuffer = '';
 
-				this.buffer = '';
+			this.nodeRuntime.stdin.write(`.load ${cellPath}\n`);
 
-				this.nodeRuntime.stdin.write(`.load ${pathName}\n`);
-
-				await new Promise(res => setTimeout(res, 500));	// wait a bit to collect all output that is associated with this eval
-				return Promise.resolve(this.buffer);
-			}
+			await new Promise(res => setTimeout(res, 500));	// wait a bit to collect all output that is associated with this eval
+			return Promise.resolve(this.outputBuffer);
 		}
-		return '';
+		throw new Error('Evaluation failed');
 	}
 
-	public mapFromCellUri(s: DebugProtocol.Source) {
-		if (s.path && s.path.indexOf('vscode-notebook-cell:') === 0) {
-			const uri = vscode.Uri.parse(s.path);
-			const info = this.getInfo(uri);
-			if (info) {
-				s.path = info.path;
-				s.sourceReference = info.ref;
-			}
-		}
-	}
+	public createTracker(): vscode.DebugAdapterTracker {
 
-	public mapToCellUri(s: DebugProtocol.Source) {
-		// check for all nodebook cell related sources (DA -> VS Code)
-		// TODO: map something back to Engine
-		if (s.path && s.path.indexOf('nodebook_cell_') >= 0) {
-			// this can only happen if we have created a dummy file for a cell previously, so we have a uri->file mapping (that lacks the source reference)
-			let info = this.map.get(s.path);
-			if (info) {
-				info.ref = s.sourceReference;
-				s.name = info.name;
-				s.path = info.uri.toString();
-				s.sourceReference = 0;
+		return <vscode.DebugAdapterTracker>{
+
+			onWillReceiveMessage: (m: DebugProtocol.ProtocolMessage) => {
+				// VS Code -> Debug Adapter
+				visitSources(m, source => {
+					if (source.path) {
+						const cellPath = this.dumpCell(source.path);
+						if (cellPath) {
+							source.path = cellPath;
+						}
+					}
+				});
+			},
+
+			onDidSendMessage: (m: DebugProtocol.ProtocolMessage) => {
+				// Debug Adapter -> VS Code
+				visitSources(m, source => {
+					if (source.path) {
+						let cellUri = this.pathToCellUri.get(source.path);
+						if (cellUri) {
+							source.path = cellUri.toString();
+							source.name = PATH.basename(cellUri.fsPath);
+							// append cell index to name
+							const cellIndex = this.document.cells.findIndex(c => c.uri.toString() === source.path);
+							if (cellIndex >= 0) {
+								source.name += `, Cell ${cellIndex + 1}`;
+							}
+						}
+					}
+				});
 			}
 		}
 	}
 
 	// ---- private ----
 
-	private getInfo(uri: vscode.Uri): NodeCellInfo | undefined {
+	/**
+	 * Store cell in temporary file and return its path or undefined if uri does not denote a cell.
+	 */
+	private dumpCell(uri: string): string | undefined {
 		try {
-			const cellNr = parseInt(uri.fragment) + 1;
-			const fileName = `nodebook_cell_${cellNr}.js`;
-			const lookupName = `<node_internals>/${fileName}`
-			const sourceName = `${PATH.basename(uri.path)}, Cell ${cellNr}`;
-			let info = this.map.get(lookupName);
-			if (!info) {
-				info = {
-					uri: uri,
-					ref: 0,
-					name: sourceName,
-					path: lookupName,
-					fileName: fileName
-				};
-				this.map.set(lookupName, info);
+			const cellUri = vscode.Uri.parse(uri, true);
+			if (cellUri.scheme === 'vscode-notebook-cell') {
+				// find cell in document based on its URI
+				const cell = this.document.cells.find(c => c.uri.toString() === uri);
+				if (cell) {
+					const cellPath = `${this.tmpDirectory}/nodebook_cell_${cellUri.fragment}.js`;
+					this.pathToCellUri.set(cellPath, cellUri);
+
+					let data = cell.document.getText();
+					data += `\n//@ sourceURL=${cellPath}`;	// trick to make node.js report the eval's source under this path
+					fs.writeFileSync(cellPath, data);
+
+					return cellPath;
+				}
 			}
-			return info;
 		} catch(e) {
-			return undefined;
 		}
+		return undefined;
+	}
+}
+
+// this vistor could be moved into the DAP npm module (it must be kept in sync with the DAP spec)
+function visitSources(msg: DebugProtocol.ProtocolMessage, visitor: (source: DebugProtocol.Source) => void): void {
+
+	const sourceHook = (source: DebugProtocol.Source | undefined) => {
+		if (source) {
+			visitor(source);
+		}
+	}
+
+	switch (msg.type) {
+		case 'event':
+			const event = <DebugProtocol.Event>msg;
+			switch (event.event) {
+				case 'output':
+					sourceHook((<DebugProtocol.OutputEvent>event).body.source);
+					break;
+				case 'loadedSource':
+					sourceHook((<DebugProtocol.LoadedSourceEvent>event).body.source);
+					break;
+				case 'breakpoint':
+					sourceHook((<DebugProtocol.BreakpointEvent>event).body.breakpoint.source);
+					break;
+				default:
+					break;
+			}
+			break;
+		case 'request':
+			const request = <DebugProtocol.Request>msg;
+			switch (request.command) {
+				case 'setBreakpoints':
+					sourceHook((<DebugProtocol.SetBreakpointsArguments>request.arguments).source);
+					break;
+				case 'breakpointLocations':
+					sourceHook((<DebugProtocol.BreakpointLocationsArguments>request.arguments).source);
+					break;
+				case 'source':
+					sourceHook((<DebugProtocol.SourceArguments>request.arguments).source);
+					break;
+				case 'gotoTargets':
+					sourceHook((<DebugProtocol.GotoTargetsArguments>request.arguments).source);
+					break;
+				case 'launchVSCode':
+					//request.arguments.args.forEach(arg => fixSourcePath(arg));
+					break;
+				default:
+					break;
+			}
+			break;
+		case 'response':
+			const response = <DebugProtocol.Response>msg;
+			if (response.success && response.body) {
+				switch (response.command) {
+					case 'stackTrace':
+						(<DebugProtocol.StackTraceResponse>response).body.stackFrames.forEach(frame => sourceHook(frame.source));
+						break;
+					case 'loadedSources':
+						(<DebugProtocol.LoadedSourcesResponse>response).body.sources.forEach(source => sourceHook(source));
+						break;
+					case 'scopes':
+						(<DebugProtocol.ScopesResponse>response).body.scopes.forEach(scope => sourceHook(scope.source));
+						break;
+					case 'setFunctionBreakpoints':
+						(<DebugProtocol.SetFunctionBreakpointsResponse>response).body.breakpoints.forEach(bp => sourceHook(bp.source));
+						break;
+					case 'setBreakpoints':
+						(<DebugProtocol.SetBreakpointsResponse>response).body.breakpoints.forEach(bp => sourceHook(bp.source));
+						break;
+					default:
+						break;
+				}
+			}
+			break;
 	}
 }
