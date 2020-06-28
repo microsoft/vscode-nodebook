@@ -75,9 +75,9 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider, 
 			...debugTypes.map(dt => vscode.debug.registerDebugAdapterTrackerFactory(dt, {
 				createDebugAdapterTracker: (session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterTracker> => {
 					if (session.configuration.__notebookID) {
-						const project = this.lookupNodebook(session.configuration.__notebookID);
-						if (project) {
-							return project.createTracker();
+						const notebook = this.lookupNodebook(session.configuration.__notebookID);
+						if (notebook) {
+							return notebook.createTracker();
 						}
 					}
 					return undefined;	// no tracker
