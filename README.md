@@ -1,151 +1,160 @@
 # Javascript Notebook Debugging
 
-A sample Javascript notebook implementation that supports debugging.
+A sample Javascript notebook that supports debugging.
 
 The main focus of this sample is to show how to implement notebook debugging functionality based on existing VS Code debugger extensions.
 
 In detail the sample shows how to:
 - run (evaluate) notebook cells without debugging,
-- intercept DAP messages in order to map back and forth between VS Code's notebook cells and xeus's cell representation.
+- intercept DAP messages in order to map back and forth between VS Code's notebook cells and the cell representation used by the underlying Node.js runtime.
 
 
 ## Running the sample
 
 We assume that you have already cloned this repository, ran `yarn` and opened the project in VS Code.
 
-Pressing **F5** opens another VS Code window with a project folder containing a sample Jupyter notebook.
+Pressing **F5** opens another VS Code window with a project folder containing a sample notebook.
 
 In order to debug cells you can enable debug mode by pressing the "bug" action in the editors toolbook.
 This opens the debug toolbar and makes the breakpoint gutter available where you can set breakpoints.
 When you now evaluate cells, breakpoints are hit and you can inspect variables and datastructures in VS Code's usual debugger views and panes.
 
-![Running and evaluating notebook cells](images/debugging-cells.gif)
+![Running and evaluating notebook cells](images/debugging-in-nodebook.gif)
 
 
 ## Implementation Notes
 
-These notes cover only the debugging functionality of the notebook implementation which lives exclusively in the source file [`debugging.ts`](https://github.com/microsoft/vscode-simple-jupyter-notebook/blob/master/src/debugging.ts).
+These notes cover only the debugging functionality of the notebook implementation which lives mostly in the source file [`nodeKernel.ts`](https://github.com/microsoft/vscode-nodebook/blob/master/src/nodeKernel.ts).
 
-The first section explains how the debugger of the xeus kernel is made available to VS Code and the second section shows how this debugger is used to debug individual notebook cells.
+A notebook is a structured document and the individual cells are not directly available for typical debuggers because they expect the code in files on disk or as interactive input when in REPL mode.
 
-### Making the xeus kernel's debugger available to VS Code
+In the Nodebook sample we are using a Node.js runtime in REPL mode as the notebook's kernel. The following snippet shows how node.js is started and then expects to receive input via stdin:
 
-The xeus kernel implements the debug adapter protocol (DAP) but the DAP messages (requests, responses, and events) are wrapped as Jupyter messages for the [Jupyter Debug Protocol](https://jupyter-client.readthedocs.io/en/stable/messaging.html) (the Jupyter message types for the wrappers are 'debug_request', 'debug_reply', and 'debug_event').
-
-To make this protocol available as a regular VS Code debug adapter we implement a `vscode.DebugAdapter` that in the incoming direction receives Jupyter messages from the xeus kernel, unwraps the DAP message and forwards them to VS Code. In the outgoing direction it wraps the DAP messages received from VS Code as Jupyter messages and sends them to the xeus kernel.
-
-In the following `XeusDebugAdapter` implementation the `isDebugMessage` predicate checks whether a Jupyter message contains a DAP message payload.
 ```ts
-class XeusDebugAdapter implements vscode.DebugAdapter {
+  this.nodeRuntime = cp.spawn('node', [
+    `--inspect=${this.debugPort}`,
+    "-e",
+    "require('repl').start({ prompt: '', ignoreUndefined: true })"
+  ])
+```
 
-  private readonly sendMessage = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
-  private readonly messageListener: Subscription;
+One problem with this approach is that node.js REPL is single line oriented whereas notebooks cell have multiple lines.
 
-  onDidSendMessage: vscode.Event<vscode.DebugProtocolMessage> = this.sendMessage.event;
+We work around this problem by using the REPL's `.load <filename>` directive which loads the code from the given file and then excutes it. This approach requires that we have to dump the cell's content into a temporary file before the `.load <filename>` is run:
 
-  constructor(private readonly kernel: IRunningKernel) {
-    this.messageListener = this.kernel.connection.messages.pipe(filter(isDebugMessage))
-      .subscribe(evt => {
-        this.sendMessage.fire(evt.content);
-      });
+```ts
+  public async eval(cell: vscode.NotebookCell): Promise<string> {
+
+    const cellPath = this.dumpCell(cell.uri.toString());
+    this.nodeRuntime.stdin.write(`.load ${cellPath}\n`);
+
+    // collect output from node.js runtime
+
+    return output;
   }
+```
 
-  async handleMessage(message: DebugProtocol.ProtocolMessage) {
-    if (message.type === 'request') {
-      this.kernel.connection.sendRaw(debugRequest(message as DebugProtocol.Request));
-    } else if (message.type === 'response') {
-      this.kernel.connection.sendRaw(debugResponse(message as DebugProtocol.Response));
-    } else {
-      console.assert(false, `Unknown message type to send ${message.type}`);
+The `NodeKernel.dumpCell` utility checks whether the given Uri denotes a cell in the notebook and if it does the cell's content is stored in a temporary file.
+
+```ts
+  private dumpCell(uri: string): string | undefined {
+    try {
+      const cellUri = vscode.Uri.parse(uri, true);
+      if (cellUri.scheme === 'vscode-notebook-cell') {
+        // find cell in document by matching its URI
+        const cell = this.document.cells.find(c => c.uri.toString() === uri);
+        if (cell) {
+          const cellPath = `${this.tmpDirectory}/nodebook_cell_${cellUri.fragment}.js`;
+          this.pathToCell.set(cellPath, cell);
+
+          let data = cell.document.getText();
+          data += `\n//@ sourceURL=${cellPath}`;	// trick to make node.js report the eval's source under this path
+          fs.writeFileSync(cellPath, data);
+
+          return cellPath;
+        }
+      }
+    } catch(e) {
     }
+    return undefined;
   }
-
-  dispose() {
-    this.messageListener.unsubscribe();
-  }
-}
 ```
 
-The debugger available in the xeus kernel is surfaced as a VS Code debugger of type `xeus` through this static contribution in the extension's `package.json`:
+VS Code manages breakpoints autonomously from debuggers based on document URIs. When a debug session is started, VS Code sends the breakpoint data to the debug extension and it expects to receive the source location for a hit breakpoint again based on document URIs.
 
-```
-  "debuggers": [
-    {
-      "type": "xeus",
-      "label": "xeus Debug"
+The same holds for notebooks where each cell has its own document with its own cell URI.
+So notebook cell breakpoints are just like regular breakpoints, the only difference being a cell URI.
+
+Because we store the cell contents in temporary files before the debugger sees them, we need to replace the cell URI of breakpoints to the paths of the corresponding temporary file when talking to the debugger, and the reversed when receiving data from the debugger.
+
+These transformations can be easily achieved by use of the `vscode.DebugAdapterTracker` which has full access to the communication between VS Code and the debug adapter. A `DebugAdapterTracker` can be created and installed for a debug session by means of a factory which is registered for a specific debug type:
+
+```ts
+  vscode.debug.registerDebugAdapterTrackerFactory('node', {
+    createDebugAdapterTracker: (session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterTracker> => {
+      const kernel: NodeKernel = ... // find the NodeKernel that corresponds to the given debug session
+      if (kernel) {
+          return kernel.createTracker();
+      }
+      return undefined;
     }
-  ],
-  "activationEvents": [
-    "onDebug:xeus"
-  ],
+  });
 ```
 
-The debugger's implementation (class `XeusDebugAdapter` from above) is registered dynamically when the extension is activated:
+For the actual tranformation we have to find all places in the DAP protocol where file paths are used. These places are all represented by the `DebugProtocol.Source` interface and the visitor function `visitSources` can be used to "visit" those places and perform the mapping (since the `visitSources` function depends heavily on the DAP specification, it should really live in the corresponding DAP npm module, but for now this sample just contains a copy that might get out of date).
+
 
 ```ts
-  vscode.debug.registerDebugAdapterDescriptorFactory('xeus', {
-    createDebugAdapterDescriptor: session => {
-      const kernel =  /* get correct kernel */
-      return new vscode.DebugAdapterInlineImplementation(new XeusDebugAdapter(kernel));
-    }
-  })
-```
+  public createTracker(): vscode.DebugAdapterTracker {
 
-### Notebook cell debugging with the xeus debugger
+    return <vscode.DebugAdapterTracker>{
 
-A notebook is a structured document and the individual cells are not directly available for typical debuggers because they expect the code in files on disk. This means that debugging a cell typically requires to store the cell's contents in a temporary file.
-
-A consequence of this is that the debugger needs breakpoints locations in terms of these temporary files and when hitting a breakpoint it will report back the source location based on the temporary file.
-
-Since these temporary files are an implementation detail invisible to users, all cell references must be mapped to temporary files and temporary files back to cell references.
-
-This mapping is implemented in the `XeusDebugAdapter` because that's the central place where all messages between xeus and VS Code travel through. Two maps are used for mapping cell URIs to temp file paths and temp file paths back to `vscode.NotebookCell`:
-
-```ts
-  private readonly cellToFile = new Map<string, string>();
-  private readonly fileToCell = new Map<string, vscode.NotebookCell>();
-```
-
-To apply the mapping we have to find all places in the DAP protocol where file paths are used. These places are all represented by the `DebugProtocol.Source` interface and the utility function `visitSources` can be used to "visit" those places and perform the mapping (since the `visitSources` function depends heavily on the DAP specification, it should really live in the corresponding DAP npm module, but for now this sample just contains a copy that might get out of date).
-
-With this the receiving side in the `XeusDebugAdapter` becomes this:
-```ts
-  constructor(private readonly kernel: IRunningKernel) {
-    this.messageListener = this.kernel.connection.messages.pipe(filter(isDebugMessage))
-      .subscribe(evt => {
-
-        // map Sources from Xeus to VS Code
-        visitSources(evt.content, source => {
-          if (source && source.path) {
-            const cell = this.fileToCell.get(source.path);
-            if (cell) {
-              source.name = path.basename(cell.uri.path);
-              const index = cell.notebook.cells.indexOf(cell);
-              if (index >= 0) {
-                source.name += `, Cell ${index+1}`;
-              }
-              source.path = cell.uri.toString();
+      onWillReceiveMessage: (m: DebugProtocol.ProtocolMessage) => {
+        // VS Code -> Debug Adapter
+        visitSources(m, source => {
+          if (source.path) {
+            const cellPath = this.dumpCell(source.path);
+            if (cellPath) {
+              source.path = cellPath;
             }
           }
         });
+      },
 
-        this.sendMessage.fire(evt.content);
-      });
-  }
-```
-We just try to map a source path to a cell and if there is one, we use the cell's URI. The display name of the source is set to the notebooks base name followed by the cell's index with the notebook.
-
-```ts
-  async handleMessage(message: DebugProtocol.ProtocolMessage) {
-    if (message.type === 'request') {
-      this.kernel.connection.sendRaw(debugRequest(message as DebugProtocol.Request));
-    } else if (message.type === 'response') {
-      this.kernel.connection.sendRaw(debugResponse(message as DebugProtocol.Response));
-    } else {
-      console.assert(false, `Unknown message type to send ${message.type}`);
+      onDidSendMessage: (m: DebugProtocol.ProtocolMessage) => {
+        // Debug Adapter -> VS Code
+        visitSources(m, source => {
+          if (source.path) {
+            let cell = this.pathToCell.get(source.path);
+            if (cell) {
+              source.path = cell.uri.toString();
+              source.name = PATH.basename(cell.uri.fsPath);
+              // append cell index to name
+              const cellIndex = this.document.cells.indexOf(cell);
+              if (cellIndex >= 0) {
+                source.name += `, Cell ${cellIndex + 1}`;
+              }
+            }
+          }
+        });
+      }
     }
   }
 ```
+
+
+Two maps are used for mapping cell URIs to temp file paths and temp file paths back to `vscode.NotebookCell`:
+
+```ts
+  private pathToCell: Map<string, vscode.NotebookCell> = new Map();
+```
+
+
+With this the receiving side in the `XeusDebugAdapter` becomes this:
+
+
+We just try to map a source path to a cell and if there is one, we use the cell's URI. The display name of the source is set to the notebooks base name followed by the cell's index with the notebook.
+
 
 Mapping into the other direction is very similar but with a twist:
 in this case we not only have to map cell URIs to temporary file paths but we have to trigger the actual creation of the temporary files and to update the dictionaries used for the mapping.
@@ -154,49 +163,9 @@ Since xeus is a notebook kernel that supports cell debugging, xeus provides supp
 
 VS Code can easily use this custom DAP request via the extension API `DebugSession.customRequest`. Here is the resulting utility for storing a cell and updating the maps:
 
-```ts
-private async dumpCell(cell: vscode.NotebookCell): Promise<void> {
-  try {
-    const response = await this.session.customRequest('dumpCell', { code: cell.document.getText() });
-    this.fileToCell.set(response.sourcePath, cell);
-    this.cellToFile.set(cell.uri.toString(), response.sourcePath);
-  } catch (err) {
-    console.log(err);
-  }
-}
-```
 
 With this the outbound mapping in the `XeusDebugAdapter` becomes this:
 
-```ts
-  async handleMessage(message: DebugProtocol.ProtocolMessage) {
 
-    // intercept 'setBreakpoints' request
-    if (message.type === 'request' && (<any>message).command === 'setBreakpoints') {
-      const args = (<any>message).arguments;
-      if (args.source && args.source.path && args.source.path.indexOf('vscode-notebook-cell:') === 0) {
-        await this.dumpCell(args.source.path);
-      }
-    }
-
-    // map Source paths from VS Code to Xeus
-    visitSources(message, source => {
-      if (source && source.path) {
-        const p = this.cellToFile.get(source.path);
-        if (p) {
-          source.path = p;
-        }
-      }
-    });
-
-    if (message.type === 'request') {
-      this.kernel.connection.sendRaw(debugRequest(message as DebugProtocol.Request));
-    } else if (message.type === 'response') {
-      this.kernel.connection.sendRaw(debugResponse(message as DebugProtocol.Response));
-    } else {
-      console.assert(false, `Unknown message type to send ${message.type}`);
-    }
-  }
-```
 First we detect the `setBreakpoint` request and then we store the cell's contents in the temporary file.
 After this we use `visitSources` to perform the "cell to path" mapping.
