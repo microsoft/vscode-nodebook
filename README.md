@@ -82,16 +82,16 @@ The `NodeKernel.dumpCell` utility checks via the scheme whether the URI denotes 
 ```
 
 With these preliminaries it is possible to evaluate cells, but source breakpoints will not yet work. Here is why:
-VS Code manages (source) breakpoints autonomously from debuggers just by keeping the source document's URI and line and column information. When a debug session starts, VS Code registers breakpoints by sending this data to the debug extension. When a breakpoint is hit the debug extension is expected to send the actual location back to VS Code as document URIs and line and column information.
+VS Code manages (source) breakpoints autonomously from debuggers by keeping the source document's URI and line and column information. When a debug session starts, VS Code registers breakpoints by sending this data to the debug extension. When a breakpoint is hit the debug extension is expected to send the actual location back to VS Code as document URIs and line and column information.
 
 The same holds for notebooks where each cell has its own document with its own cell URI. So notebook cell breakpoints are just like regular breakpoints.
 
-Because we store the cell contents in temporary files before the debugger sees them, we need to replace the cell URI of breakpoints to the paths of the corresponding temporary file when talking to the debugger. And when a breakpoint is hit, we need to replace the file paths in the location information by the original cell URIs.
+Because we store the cell contents in temporary files before the debugger sees them, we need to replace the cell URI of a breakpoint by the path of the corresponding temporary file when talking to the debugger. And when a breakpoint is hit, we need to replace the file paths in the location information by the original cell URIs.
 
 These transformations can be easily achieved by use of the [`vscode.DebugAdapterTracker`](https://github.com/microsoft/vscode/blob/3f43f45303c9433cf2a6422a6e61215e0631919d/src/vs/vscode.d.ts#L10843-L10871) which has full access to the DAP based communication between VS Code and the debug adapter. The tracker's `onWillReceiveMessage` is called for all DAP messages from VS Code to the debug adapter, and `onDidSendMessage` is called for all DAP messages from the debug adapter back to VS Code.
 A `DebugAdapterTracker` can be created and installed for a debug session by means of a factory object which is registered for a specific debug type.
 
-In the Nodebook sample the factory is registered once for all JavaScript/Node debugger types in [nodebookProvider.ts](https://github.com/microsoft/vscode-nodebook/blob/master/src/nodebookProvider.ts) with code that tries to find the corresponding NodeKernel for the debug session and then delegates the creation of the tracker to it:
+In the Nodebook sample the factory is registered on extension activation for all JavaScript/Node debugger types in [nodebookProvider.ts](https://github.com/microsoft/vscode-nodebook/blob/master/src/nodebookProvider.ts) with code that tries to find the corresponding NodeKernel for the debug session and then delegates the creation of the tracker to it:
 
 ```ts
   vscode.debug.registerDebugAdapterTrackerFactory('node', {
@@ -105,7 +105,7 @@ In the Nodebook sample the factory is registered once for all JavaScript/Node de
   });
 ```
 
-For the actual tranformation we have to find all places in the DAP protocol where file paths or URIs are used. These places are all represented by the `DebugProtocol.Source` interface and the visitor function `visitSources` can be used to "visit" those places and perform the mapping. Since the `visitSources` function depends heavily on the DAP specification, it should really live in the corresponding DAP npm module, but for now this sample just contains a copy that might get out of date.
+For the actual tranformation we have to find all places in the DAP protocol where file paths or URIs are used. These places are all represented by the `DebugProtocol.Source` interface and the visitor function `visitSources` can be used to "visit" those places and perform the mapping. Since the `visitSources` function depends heavily on the DAP specification, it should really live in the corresponding DAP npm module, but for now this sample just contains a copy (that might get out of date over time).
 
 Here is the Nodebook sample tracker that converts cell URIs to tmp file paths and vice versa:
 ```ts
@@ -148,4 +148,4 @@ Here is the Nodebook sample tracker that converts cell URIs to tmp file paths an
 
 In the direction from VS Code to the debug adapter (`onWillReceiveMessage`) we use the `dumpCell` method again because it will ensure that the cell's content is dumped to a temporary file before the path to this file is used to patch the source object.
 
-In the other direction (`onDidSendMessage`) the dictionary is used to find the notebook cell for a given file path. If successfull, the source object is patched with the cell's URI and the display name of the source is set to the notebook's base name followed by the cell's index with the notebook.
+In the other direction (`onDidSendMessage`) the dictionary is used to find the notebook cell for a given file path. If successfull, the source object is patched with the cell's URI and the display name of the source is set to the notebook's base name followed by the cell's index within the notebook.
