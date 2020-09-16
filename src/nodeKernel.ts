@@ -22,7 +22,6 @@ export class NodeKernel {
 	private debugPort?: number;
 
 	constructor(private document: vscode.NotebookDocument) {
-		this.tmpDirectory = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
 	}
 
 	public async start() {
@@ -51,7 +50,7 @@ export class NodeKernel {
 			__notebookID: this.document.uri.toString(),
 			name: 'nodebook',
 			request: 'attach',
-			type: 'node',
+			type: 'node2',	// doesn't work with 'pwa-node'
 			port: this.debugPort,
 			timeout: 100000,
 			outputCapture: 'std',
@@ -143,6 +142,9 @@ export class NodeKernel {
 				// find cell in document by matching its URI
 				const cell = this.document.cells.find(c => c.uri.toString() === uri);
 				if (cell) {
+					if (!this.tmpDirectory) {
+						this.tmpDirectory = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
+					}		
 					const cellPath = `${this.tmpDirectory}/nodebook_cell_${cellUri.fragment}.js`;
 					this.pathToCell.set(cellPath, cell);
 

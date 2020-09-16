@@ -12,6 +12,7 @@
 	],
 	"activationEvents": [
 		"onNotebookEditor:nodebook",
+		"onNotebook:nodebook",
 		"onDebugDynamicConfigurations:node"
 	],
 	"main": "./out/extension.js",

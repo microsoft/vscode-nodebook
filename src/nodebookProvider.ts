@@ -22,11 +22,12 @@ const debugTypes = ['node', 'node2', 'pwa-node', 'pwa-chrome'];
 
 export class NodebookContentProvider implements vscode.NotebookContentProvider, vscode.NotebookKernel {
 
+	readonly id = 'nodebookKernel';
+	public label = 'Node.js Kernel';
+
 	private _localDisposables: vscode.Disposable[] = [];
 	private readonly _associations = new Map<string, [ProjectAssociation, Nodebook]>();
 
-	public label = 'Node.js Kernel';
- 	public kernel = this;
 
 	onDidChangeNotebook: vscode.Event<NotebookDocumentEditEvent> = new vscode.EventEmitter<NotebookDocumentEditEvent>().event;
 
@@ -84,6 +85,14 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider, 
 				}
 			}))
 		);
+
+		vscode.notebook.registerNotebookKernelProvider({
+			viewType: 'nodebook',
+		}, {
+			provideKernels: () => {
+				return [this];
+			}
+		});
 	}
 
 	public lookupNodebook(keyOrUri: string | vscode.Uri | undefined): Nodebook | undefined {
@@ -157,23 +166,9 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider, 
 		};
 	}
 
-	public async executeCell(document: vscode.NotebookDocument, cell: vscode.NotebookCell, token: vscode.CancellationToken): Promise<void> {
 
-		if (!cell) {
 
-			const project = this.lookupNodebook(document.uri);
-			if (project) {
-				project.restartKernel();
-			}
-
-			// run them all
-			for (let cell of document.cells) {
-				if (cell.cellKind === vscode.CellKind.Code && cell.metadata.runnable) {
-					await this.executeCell(document, cell, token);
-				}
-			}
-			return;
-		}
+	public async executeCell(_document: vscode.NotebookDocument, cell: vscode.NotebookCell): Promise<void> {
 
 		let output = '';
 		let error: Error | undefined;
@@ -200,14 +195,18 @@ export class NodebookContentProvider implements vscode.NotebookContentProvider, 
 		}
 	}
 
-	public async executeAllCells(document: vscode.NotebookDocument, token: vscode.CancellationToken): Promise<void> {
+	public cancelCellExecution(_document: vscode.NotebookDocument, _cell: vscode.NotebookCell): void {
+		// not yet supported
+	}
 
+	public async executeAllCells(document: vscode.NotebookDocument): Promise<void> {
 	  for (const cell of document.cells) {
-		if (token.isCancellationRequested) {
-		  break;
-		}
-		await this.executeCell(document, cell, token);
+		await this.executeCell(document, cell);
 	  }
+	}
+
+	cancelAllCellsExecution(_document: vscode.NotebookDocument): void {
+		// not yet supported
 	}
 
 	public dispose() {
