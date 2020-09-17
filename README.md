@@ -15,7 +15,7 @@ We assume that you have already cloned this repository, ran `yarn` and opened th
 
 Pressing **F5** opens another VS Code window with a project folder containing a sample notebook.
 
-In order to debug cells you can enable debug mode by pressing the "bug" action in the editors toolbook.
+In order to debug cells you can enable debug mode by pressing the "bug" action in the editor's toolbar.
 This makes the breakpoint gutter available where you can set breakpoints.
 When you now evaluate cells, breakpoints will be hit and you can inspect variables in VS Code's usual debugger views and panes.
 
