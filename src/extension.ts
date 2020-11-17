@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
- import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import { NodebookContentProvider } from './nodebookProvider';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -15,8 +15,8 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.notebook.registerNotebookContentProvider('nodebook', nodebookContentProvider),
 
 		vscode.commands.registerCommand('nodebook.toggleDebugging', () => {
-			if (vscode.notebook.activeNotebookEditor) {
-				const { document } = vscode.notebook.activeNotebookEditor;
+			if (vscode.window.activeNotebookEditor) {
+				const { document } = vscode.window.activeNotebookEditor;
 				const nodebook = nodebookContentProvider.lookupNodebook(document.uri);
 				if (nodebook) {
 					nodebook.toggleDebugging(document);
@@ -25,8 +25,8 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 
 		vscode.commands.registerCommand('nodebook.restartKernel', () => {
-			if (vscode.notebook.activeNotebookEditor) {
-				const { document } = vscode.notebook.activeNotebookEditor;
+			if (vscode.window.activeNotebookEditor) {
+				const { document } = vscode.window.activeNotebookEditor;
 				const nodebook = nodebookContentProvider.lookupNodebook(document.uri);
 				if (nodebook) {
 					nodebook.restartKernel();
