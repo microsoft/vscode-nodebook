@@ -13,7 +13,7 @@
  * - Add `"enableProposedApi": true` to your package.json.
  * - Copy this file to your project.
  */
-
+//@ts-nocheck
 declare module 'vscode' {
 
 	// #region auth provider: https://github.com/microsoft/vscode/issues/88309

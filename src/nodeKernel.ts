@@ -3,7 +3,7 @@
  *	Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as vscode from 'vscode';
+import * as vsc from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as PATH from 'path';
@@ -12,19 +12,18 @@ import { DebugProtocol } from 'vscode-debugprotocol';
 const rmdir = require('rimraf');
 const getPort = require('get-port');
 
-
 export class NodeKernel {
 
 	private nodeRuntime: cp.ChildProcess | undefined;
 	private outputBuffer = '';	// collect output here
-	private pathToCell: Map<string, vscode.NotebookCell> = new Map();
+	private pathToCell: Map<string, vsc.NotebookCell> = new Map();
 	private tmpDirectory?: string;
 	private debugPort?: number;
 
-	constructor(private document: vscode.NotebookDocument) {
+	constructor(private document: vsc.NotebookDocument) {
 	}
 
-	public async start() {
+	async start() {
 		if (!this.nodeRuntime) {
 
 			this.debugPort = await getPort();
@@ -45,7 +44,7 @@ export class NodeKernel {
 		}
 	}
 
-	public getLaunchConfig() {
+	getLaunchConfig() {
 		return {
 			__notebookID: this.document.uri.toString(),
 			name: 'nodebook',
@@ -58,12 +57,12 @@ export class NodeKernel {
 		};
 	}
 
-	public async restart() {
+	async restart() {
 		this.stop();
 		await this.start();
 	}
 
-	public stop() {
+	stop() {
 
 		if (this.nodeRuntime) {
 			this.nodeRuntime.kill();
@@ -81,7 +80,7 @@ export class NodeKernel {
 		}
 	}
 
-	public async eval(cell: vscode.NotebookCell): Promise<string> {
+	async eval(cell: vsc.NotebookCell): Promise<string> {
 
 		const cellPath = this.dumpCell(cell.uri.toString());
 		if (cellPath && this.nodeRuntime && this.nodeRuntime.stdin) {
@@ -96,7 +95,7 @@ export class NodeKernel {
 		throw new Error('Evaluation failed');
 	}
 
-	public createTracker(): vscode.DebugAdapterTracker {
+	createTracker(): vsc.DebugAdapterTracker {
 
 		return {
 
@@ -137,14 +136,14 @@ export class NodeKernel {
 	 */
 	private dumpCell(uri: string): string | undefined {
 		try {
-			const cellUri = vscode.Uri.parse(uri, true);
+			const cellUri = vsc.Uri.parse(uri, true);
 			if (cellUri.scheme === 'vscode-notebook-cell') {
 				// find cell in document by matching its URI
 				const cell = this.document.cells.find(c => c.uri.toString() === uri);
 				if (cell) {
 					if (!this.tmpDirectory) {
 						this.tmpDirectory = fs.mkdtempSync(PATH.join(os.tmpdir(), 'vscode-nodebook-'));
-					}		
+					}
 					const cellPath = `${this.tmpDirectory}/nodebook_cell_${cellUri.fragment}.js`;
 					this.pathToCell.set(cellPath, cell);
 
@@ -155,7 +154,7 @@ export class NodeKernel {
 					return cellPath;
 				}
 			}
-		} catch(e) {
+		} catch (e) {
 		}
 		return undefined;
 	}

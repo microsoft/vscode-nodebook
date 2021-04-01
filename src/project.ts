@@ -3,17 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as vscode from 'vscode';
+import * as vsc from 'vscode';
 import { NodeKernel } from './nodeKernel';
 
-export class Nodebook implements vscode.Disposable {
+export class Project implements vsc.Disposable {
 
 	private nodeKernel: NodeKernel;
 	private debugging = false;
-	private disposables: vscode.Disposable[] = [];
-	private activeDebugSession: vscode.DebugSession | undefined;
+	private disposables: vsc.Disposable[] = [];
+	private activeDebugSession: vsc.DebugSession | undefined;
 
-	constructor(doc: vscode.NotebookDocument) {
+	constructor(doc: vsc.NotebookDocument) {
 		this.nodeKernel = new NodeKernel(doc);
 	}
 
@@ -22,16 +22,16 @@ export class Nodebook implements vscode.Disposable {
 		this.nodeKernel.stop();
 	}
 
-	public async restartKernel() {
+	async restart_kernel_cmd() {
 		await this.stopDebugger();
-		await vscode.commands.executeCommand('notebook.clearAllCellsOutputs');
+		await vsc.commands.executeCommand('notebook.clearAllCellsOutputs');
 		await this.nodeKernel.restart();
 		if (this.debugging) {
 			await this.startDebugger();
 		}
 	}
 
-	public async toggleDebugging(document: vscode.NotebookDocument) {
+	async toggle_debugging_cmd(document: vsc.NotebookDocument) {
 
 		if (this.debugging) {
 			this.stopDebugger();
@@ -40,13 +40,13 @@ export class Nodebook implements vscode.Disposable {
 		this.debugging = !this.debugging;
 
 		for (let cell of document.cells) {
-			if (cell.cellKind === vscode.CellKind.Code) {
+			if (cell.cellKind === vsc.CellKind?.Code) {
 				cell.metadata.breakpointMargin = this.debugging;
 			}
 		}
 	}
 
-	public async eval(cell: vscode.NotebookCell): Promise<string> {
+	async eval(cell: vsc.NotebookCell): Promise<string> {
 		await this.nodeKernel.start();
 		if (this.debugging) {
 			await this.startDebugger();
@@ -54,7 +54,7 @@ export class Nodebook implements vscode.Disposable {
 		return this.nodeKernel.eval(cell);
 	}
 
-	public addDebugSession(session: vscode.DebugSession) {
+	addDebugSession(session: vsc.DebugSession) {
 		if (this.activeDebugSession) {
 			console.log(`error: there is already a debug session`);
 			return;
@@ -62,7 +62,7 @@ export class Nodebook implements vscode.Disposable {
 		this.activeDebugSession = session;
 	}
 
-	public removeDebugSession(session: vscode.DebugSession) {
+	removeDebugSession(session: vsc.DebugSession) {
 		if (this.activeDebugSession !== session) {
 			console.log(`error: removed session doesn't match active session`);
 			return;
@@ -70,15 +70,15 @@ export class Nodebook implements vscode.Disposable {
 		this.activeDebugSession = undefined;
 	}
 
-	public createTracker(): vscode.DebugAdapterTracker {
+	createTracker(): vsc.DebugAdapterTracker {
 		return this.nodeKernel.createTracker();
 	}
 
 	private async startDebugger() {
 		if (!this.activeDebugSession) {
 			try {
-				await vscode.debug.startDebugging(undefined, this.nodeKernel.getLaunchConfig());
-			} catch(err) {
+				await vsc.debug.startDebugging(undefined, this.nodeKernel.getLaunchConfig());
+			} catch (err) {
 				console.log(`error: ${err}`);
 			}
 		}
@@ -86,7 +86,7 @@ export class Nodebook implements vscode.Disposable {
 
 	private async stopDebugger() {
 		if (this.activeDebugSession) {
-			await vscode.commands.executeCommand('workbench.action.debug.stop');
+			await vsc.commands.executeCommand('workbench.action.debug.stop');
 			this.disposables.forEach(d => d.dispose());
 			this.disposables = [];
 		}
